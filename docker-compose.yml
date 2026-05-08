@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:9.7.0
+    container_name: shelfie-mysql
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    networks:
+      - shelfie-network
+    healthcheck:
+        test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+        interval: 15s
+        timeout: 10s
+        retries: 10
+        start_period: 30s
+
+  app:
+    build: ./app
+    container_name: shelfie-app
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - PHP_SESSION_SAVE_PATH=/tmp/sessions
+    volumes:
+      - ./app:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - shelfie-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: shelfie-nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./app:/var/www/html
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - shelfie-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  db_data:
+
+networks:
+  shelfie-network:
+    driver: bridge

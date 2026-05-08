@@ -1,0 +1,19 @@
+FROM php:8.2-fpm-alpine
+
+LABEL maintainer="Isaque"
+
+RUN adduser -D appuser
+
+WORKDIR /var/www/html
+RUN chown -R appuser:appuser /var/www/html
+
+RUN docker-php-ext-install pdo pdo_mysql
+
+COPY --chown=appuser:appuser . .
+
+RUN mkdir -p /tmp/sessions && chown -R appuser:appuser /tmp/sessions
+
+EXPOSE 9000
+
+USER appuser
+
