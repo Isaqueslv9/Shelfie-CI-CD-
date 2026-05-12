@@ -1,32 +1,55 @@
-# 📚 Shelfie — Deploy Completo com CI/CD
+# Shelfie — Deploy Completo com CI/CD na AWS
 
 Projeto pessoal de estudo com foco em containerização, deploy em nuvem e automação com CI/CD.  
 A aplicação é um gerenciador de estante de livros com autenticação, CRUD completo e estatísticas de leitura.
 
 ---
 
-## 🛠️ Stack
+## Stack
 
 | Tecnologia | Função |
 |---|---|
-| PHP 8.2 | Aplicação |
-| MySQL 9.7 | Banco de dados |
-| Nginx | Proxy reverso |
-| Docker & Docker Compose | Containerização e orquestração |
+| PHP 8.2 + Nginx | Aplicação |
+| MySQL 9.7 | Banco de dados local |
+| Docker & Docker Compose | Containerização e orquestração local |
+| Amazon ECR | Registry de imagens |
+| Amazon ECS Fargate | Orquestração de containers na nuvem |
+| Amazon RDS MySQL | Banco de dados gerenciado |
+| GitHub Actions | Pipeline CI/CD |
 
 ---
 
-## 📁 Estrutura do Projeto
+## Arquitetura
 
 ```
-shelfie-mysql/
-├── .env                        
+GitHub (push) → GitHub Actions → ECR (imagens) → ECS Fargate
+                                                       │
+                                              ┌────────┴────────┐
+                                              │                 │
+                                          shelfie-nginx    shelfie-app
+                                          (porta 80)       (porta 9000)
+                                                               │
+                                                          RDS MySQL
+```
+
+---
+
+## Estrutura do Projeto
+
+```
+shelfie-cicd/
+├── .env                        # Variáveis de ambiente (não versionado)
+├── .env.example                # Modelo de variáveis
 ├── .gitignore
-├── docker-compose.yml
+├── docker-compose.yml          # Orquestração local
+├── .github/
+│   └── workflows/
+│       └── deploy.yml          # Pipeline CI/CD
 ├── mysql-init/
-│   └── init.sql                
+│   └── init.sql                # Schema e seed do banco
 ├── nginx/
-│   └── default.conf            
+│   ├── dockerfile
+│   └── default.conf            # Configuração do Nginx
 └── app/
     ├── Dockerfile
     ├── php.ini
@@ -50,11 +73,11 @@ shelfie-mysql/
 
 ---
 
-## 🐳 Fase 1 — Containerização com Docker
+## Fase 1 — Containerização com Docker
 
 A aplicação originalmente rodava em XAMPP com phpMyAdmin. O objetivo desta fase foi containerizá-la do zero utilizando Docker puro.
 
-### Arquitetura
+### Arquitetura local
 
 ```
 ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
@@ -75,54 +98,126 @@ A aplicação originalmente rodava em XAMPP com phpMyAdmin. O objetivo desta fas
 - `depends_on` com `condition: service_healthy` garantindo ordem de subida: `db → app → nginx`
 - Variáveis de ambiente via `.env` — credenciais fora do código
 - Porta do banco não exposta externamente
-- `ob_start()` no header PHP para evitar conflito de headers com redirects
 - Schema e seed do banco via `init.sql` executado automaticamente na inicialização do container
 
-### Como rodar
+---
 
-```bash
-# Clonar e entrar na pasta
-git clone <url-do-repo>
-cd shelfie-mysql
+## Fase 2 — Amazon ECR
 
-# Configurar variáveis de ambiente
-cp .env.example .env
+As imagens Docker foram enviadas para o Amazon ECR para serem utilizadas pelo ECS.
 
-# Subir os containers
-docker compose up --build
+Dois repositórios criados:
+- `isaquesebastiao/shelfie-app` — imagem PHP-FPM
+- `isaquesebastiao/shelfie-nginx` — imagem Nginx
 
-# Acessar
-http://localhost
+---
+
+## Fase 3 — Amazon ECS Fargate
+
+A aplicação foi deployada no Amazon ECS utilizando AWS Fargate como infraestrutura, eliminando a necessidade de gerenciar servidores EC2.
+
+### Configuração
+
+- **Cluster:** `shelfie-cluster`
+- **Task Definition:** `shelfie-task` com dois containers (`shelfie-nginx` + `shelfie-app`)
+- **CPU:** 0.5 vCPU | **Memória:** 1GB
+- **Subnets:** públicas da VPC existente
+- **Security Group:** porta 80 liberada para `0.0.0.0/0`
+- **IP público:** habilitado
+
+### Problema Encontrado Durante o Deploy no ECS
+
+Durante o deploy da aplicação PHP no Amazon ECS utilizando AWS Fargate, a aplicação não respondia ao acessar o IP público da Task.
+
+Inicialmente, apenas o container da aplicação PHP (`php:8.2-fpm-alpine`) foi enviado para o Amazon ECR e utilizado na Task Definition. O problema é que o `php-fpm` não funciona como servidor web HTTP — ele apenas processa arquivos PHP internamente.
+
+No ambiente local, a aplicação funcionava corretamente porque o Docker Compose utilizava dois containers: Nginx e PHP-FPM. O Nginx era responsável por receber as requisições HTTP e encaminhá-las para o PHP-FPM. No ECS, como apenas o container PHP foi utilizado, não existia nenhum servidor web para responder às requisições externas.
+
+A solução foi ajustar a arquitetura para utilizar dois containers na mesma Task Definition: `shelfie-nginx` e `shelfie-app`. O container Nginx passou a expor a porta `80`, enquanto o container PHP-FPM permaneceu utilizando a porta `9000`.
+
+Também foi necessário ajustar a configuração do Nginx. Inicialmente, o arquivo `default.conf` utilizava:
+
+```nginx
+fastcgi_pass app:9000;
 ```
 
-### Comandos úteis
+Essa configuração funcionava no Docker Compose devido ao DNS interno automático do Compose. Porém, no ECS esse hostname não existia. A solução foi alterar para:
 
-```bash
-# Parar os containers mantendo os dados
-docker compose down
-
-# Reset completo (apaga volumes)
-docker compose down -v
-
-# Ver logs
-docker logs shelfie-app
-docker logs shelfie-mysql
-
-# Acessar o banco
-docker exec -it shelfie-mysql mysql -u shelfie_user -pshelfie123 shelfie
+```nginx
+fastcgi_pass 127.0.0.1:9000;
 ```
+
+Como os containers da mesma Task compartilham a rede no ECS, o Nginx conseguiu se comunicar corretamente com o PHP-FPM através do localhost. Após recriar a imagem do Nginx, realizar novo push para o Amazon ECR e atualizar a Task Definition no ECS, a aplicação passou a responder corretamente via navegador.
+
+---
+
+## Fase 4 — Amazon RDS MySQL
+
+O banco de dados foi migrado do container local para o Amazon RDS, tornando-o um serviço gerenciado e independente dos containers.
+
+### Configuração
+
+- **Engine:** MySQL 8.4
+- **Instância:** db.t3.micro (free tier)
+- **VPC:** mesma VPC do ECS
+- **Subnets:** privadas
+- **Security Group:** porta 3306 liberada apenas para o Security Group do ECS
+- **Publicly accessible:** Yes
+
+### Migração
+
+O `init.sql` com o schema e seed foi executado diretamente no RDS após a criação. A variável `DB_HOST` na Task Definition foi atualizada para o endpoint do RDS:
+
+```
+shelfiedb.xxxxxxxxx.us-east-1.rds.amazonaws.com
+```
+
+---
+
+## Fase 5 — GitHub Actions (CI/CD)
+
+Pipeline de deploy automatizado configurado para rodar a cada push na branch `main`.
+
+### Fluxo da pipeline
+
+```
+push na main → checkout → configure AWS credentials → login ECR →
+build + push imagem PHP → build + push imagem Nginx → force new deployment no ECS
+```
+
+### Secrets configurados no GitHub
+
+| Secret | Descrição |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Chave de acesso AWS |
+| `AWS_SECRET_ACCESS_KEY` | Chave secreta AWS |
+| `AWS_REGION` | Região AWS |
+| `ECR_REGISTRY` | URI do registry ECR |
+| `ECR_REPOSITORY_APP` | Nome do repositório PHP |
+| `ECR_REPOSITORY_NGINX` | Nome do repositório Nginx |
+| `ECS_CLUSTER` | Nome do cluster ECS |
+| `ECS_SERVICE` | Nome do service ECS |
+
+---
+
+## Boas práticas aplicadas
+
+- Least privilege — container `app` roda com usuário `appuser`, não root
+- Credenciais fora do código via `.env` e secrets do GitHub
+- Porta do banco não exposta publicamente
+- Security Group do RDS liberado apenas para o SG do ECS
+- Volume nomeado para persistência dos dados locais
+- Healthcheck nos containers garantindo ordem de inicialização
 
 ---
 
 ## 🗺️ Roadmap
 
 - [x] Fase 1 — Containerização com Docker
-- [ ] Fase 2 — Amazon ECR
-- [ ] Fase 3 — Amazon ECS
-- [ ] Fase 4 — Amazon RDS
-- [ ] Fase 5 — CI/CD com GitHub Actions
+- [x] Fase 2 — Amazon ECR
+- [x] Fase 3 — Amazon ECS Fargate
+- [x] Fase 4 — Amazon RDS MySQL
+- [x] Fase 5 — CI/CD com GitHub Actions
+- [ ] Projeto 2 — EKS + GitLab CI
 
 ---
-
-
-# Shelfie-CI-CD-
