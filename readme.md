@@ -21,16 +21,7 @@ A aplicação é um gerenciador de estante de livros com autenticação, CRUD co
 
 ## Arquitetura
 
-```
-GitHub (push) → GitHub Actions → ECR (imagens) → ECS Fargate
-                                                       │
-                                              ┌────────┴────────┐
-                                              │                 │
-                                          shelfie-nginx    shelfie-app
-                                          (porta 80)       (porta 9000)
-                                                               │
-                                                          RDS MySQL
-```
+![Arquitetura](assets/arquitetura.png)
 
 ---
 
@@ -110,6 +101,8 @@ Dois repositórios criados:
 - `isaquesebastiao/shelfie-app` — imagem PHP-FPM
 - `isaquesebastiao/shelfie-nginx` — imagem Nginx
 
+![Repositorios no ECR](assets/ecr-repositorios.png)
+
 ---
 
 ## Fase 3 — Amazon ECS Fargate
@@ -149,6 +142,11 @@ fastcgi_pass 127.0.0.1:9000;
 
 Como os containers da mesma Task compartilham a rede no ECS, o Nginx conseguiu se comunicar corretamente com o PHP-FPM através do localhost. Após recriar a imagem do Nginx, realizar novo push para o Amazon ECR e atualizar a Task Definition no ECS, a aplicação passou a responder corretamente via navegador.
 
+![Task Definition](assets/ecs-task-definition.png)
+![Service](assets/ecs-service-running.png)
+![Login do Shelfie](assets/shelfie-login.png)
+![Tela inicial do Shelfie](assets/shelfie-tela-inicial.png)
+
 ---
 
 ## Fase 4 — Amazon RDS MySQL
@@ -172,6 +170,7 @@ O `init.sql` com o schema e seed foi executado diretamente no RDS após a criaç
 shelfiedb.xxxxxxxxx.us-east-1.rds.amazonaws.com
 ```
 
+![Banco de Dados no RDS](assets/rds-instance.png)
 ---
 
 ## Fase 5 — GitHub Actions (CI/CD)
@@ -184,6 +183,8 @@ Pipeline de deploy automatizado configurado para rodar a cada push na branch `ma
 push na main → checkout → configure AWS credentials → login ECR →
 build + push imagem PHP → build + push imagem Nginx → force new deployment no ECS
 ```
+## GitHub Actions Pipeline
+![Pipeline](assets/github-actions-pipeline.png)
 
 ### Secrets configurados no GitHub
 
