@@ -25,42 +25,15 @@ A aplicação é um gerenciador de estante de livros com autenticação, CRUD co
 
 ---
 
-## Estrutura do Projeto
+## GitFlow
 
-```
-shelfie-cicd/
-├── .env                        # Variáveis de ambiente (não versionado)
-├── .env.example                # Modelo de variáveis
-├── .gitignore
-├── docker-compose.yml          # Orquestração local
-├── .github/
-│   └── workflows/
-│       └── deploy.yml          # Pipeline CI/CD
-├── mysql-init/
-│   └── init.sql                # Schema e seed do banco
-├── nginx/
-│   ├── dockerfile
-│   └── default.conf            # Configuração do Nginx
-└── app/
-    ├── Dockerfile
-    ├── php.ini
-    ├── conexao.php
-    ├── index.php
-    ├── login.php
-    ├── logout.php
-    ├── meus_livros.php
-    ├── adicionar_livro.php
-    ├── editar_livro.php
-    ├── estatisticas.php
-    ├── perfil.php
-    ├── processa_exclusao.php
-    ├── processa_favorito.php
-    ├── css/
-    ├── js/
-    └── templates/
-        ├── header.php
-        └── footer.php
-```
+| Branch | Pipeline | Ação |
+|---|---|---|
+| `develop` | `ci.yml` | Build e validação — sem deploy |
+| `main` | `deploy.yml` | Deploy automático em produção |
+
+**Fluxo:**
+develop → PR → main → produção
 
 ---
 
@@ -212,7 +185,7 @@ build + push imagem PHP → build + push imagem Nginx → force new deployment n
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] Fase 1 — Containerização com Docker
 - [x] Fase 2 — Amazon ECR
